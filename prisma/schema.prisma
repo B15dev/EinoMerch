@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Neon PostgreSQL (production / Vercel)
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String?
+  role          String    @default("CUSTOMER") // ADMIN | CUSTOMER
+  phone         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  orders        Order[]
+  sessions      Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  imageUrl    String?
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+}
+
+model Product {
+  id              String           @id @default(cuid())
+  name            String
+  slug            String           @unique
+  description     String?
+  basePrice       Float
+  compareAtPrice  Float?           // original price for discount display
+  categoryId      String?
+  category        Category?        @relation(fields: [categoryId], references: [id])
+  isActive        Boolean          @default(true)
+  isFeatured      Boolean          @default(false)
+  isNew           Boolean          @default(false)
+  lowStockThreshold Int            @default(5)
+  images          ProductImage[]
+  variants        ProductVariant[]
+  orderItems      OrderItem[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String?
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+}
+
+model ProductVariant {
+  id          String      @id @default(cuid())
+  productId   String
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  size        String      // S, M, L, XL, XXL or ONE_SIZE
+  color       String      // Black, White, etc.
+  colorHex    String?     // #000000
+  sku         String      @unique
+  price       Float?      // override basePrice if set
+  stock       Int         @default(0)
+  isActive    Boolean     @default(true)
+  orderItems  OrderItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([productId, size, color])
+}
+
+model Coupon {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  type            String    // PERCENT | FIXED
+  value           Float
+  minOrderAmount  Float?
+  maxDiscount     Float?
+  startsAt        DateTime?
+  endsAt          DateTime?
+  usageLimit      Int?
+  usedCount       Int       @default(0)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  orders          Order[]
+}
+
+model ShippingZone {
+  id          String   @id @default(cuid())
+  name        String   // Cairo, Alexandria, Other
+  price       Float
+  freeAbove   Float?   // free shipping above this amount
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  orderNumber     String      @unique
+  userId          String?
+  user            User?       @relation(fields: [userId], references: [id])
+  // Snapshot customer info
+  customerName    String
+  customerEmail   String?
+  customerPhone   String
+  // Shipping
+  governorate     String
+  city            String
+  address         String
+  notes           String?
+  // Money (all calculated server-side)
+  subtotal        Float
+  discountAmount  Float       @default(0)
+  shippingCost    Float       @default(0)
+  total           Float
+  couponId        String?
+  coupon          Coupon?     @relation(fields: [couponId], references: [id])
+  couponCode      String?
+  // Status
+  status          String      @default("PENDING") // PENDING, PAID, PROCESSING, SHIPPED, DELIVERED, CANCELLED, REFUNDED
+  paymentStatus   String      @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  paymentMethod   String?     // COD, PAYMOB, etc.
+  paymentRef      String?     // provider transaction id
+  trackingNumber  String?
+  // Inventory reserved flag
+  inventoryReserved Boolean   @default(false)
+  items           OrderItem[]
+  payments        Payment[]
+  statusHistory   OrderStatusHistory[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model OrderItem {
+  id          String         @id @default(cuid())
+  orderId     String
+  order       Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String?
+  product     Product?       @relation(fields: [productId], references: [id])
+  variantId   String?
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
+  // Snapshots (never change after order)
+  productName String
+  size        String
+  color       String
+  unitPrice   Float
+  quantity    Int
+  lineTotal   Float
+  imageUrl    String?
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  orderId       String
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider      String   // PAYMOB, COD, MOCK
+  amount        Float
+  currency      String   @default("EGP")
+  status        String   // PENDING, SUCCESS, FAILED, REFUNDED
+  providerRef   String?  // external transaction id
+  rawResponse   String?  // JSON string of provider response (sanitized)
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([provider, providerRef])
+}
+
+model OrderStatusHistory {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus  String
+  note      String?
+  changedBy String?  // admin user id or "system"
+  createdAt DateTime @default(now())
+}
+
+model InventoryLog {
+  id          String   @id @default(cuid())
+  variantId   String
+  change      Int      // positive or negative
+  reason      String   // ORDER, MANUAL, CANCEL, RETURN
+  orderId     String?
+  adminId     String?
+  note        String?
+  createdAt   DateTime @default(now())
+}
+
+model SiteSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Media {
+  id        String   @id @default(cuid())
+  filename  String
+  url       String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+}
